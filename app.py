@@ -398,4 +398,4 @@ if ticker_list:
         else:
             st.error("未能获取资产数据。")
 
-update app.py with full features
+
