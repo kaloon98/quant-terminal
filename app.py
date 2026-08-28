@@ -52,10 +52,11 @@ if not check_password():
 st.title("🚀 AI 量化操盘与策略实验室 (Ultimate Pro Max)")
 st.markdown("多因子打分 · Alpha Vantage 异动雷达 · **策略回测引擎** · **马科维茨资产配置** · **AI 财报深度对话**")
 
-# --- 数据库初始化 ---
+# --- 数据库初始化（支持单股研报 + 全盘天梯榜批量存档） ---
 def init_db():
     conn = sqlite3.connect('quant_reports.db', check_same_thread=False)
     cursor = conn.cursor()
+    # 单股研报表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,6 +65,14 @@ def init_db():
             price REAL,
             score REAL,
             report_text TEXT
+        )
+    ''')
+    # 全盘天梯榜批量存档表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            snapshot_data TEXT
         )
     ''')
     conn.commit()
@@ -230,6 +239,18 @@ def load_reports_from_db(ticker):
     cursor.execute("SELECT timestamp, price, score, report_text FROM reports WHERE ticker = ? ORDER BY id DESC", (ticker,))
     return cursor.fetchall()
 
+def save_snapshot_to_db(matrix_df):
+    cursor = db_conn.cursor()
+    csv_data = matrix_df.to_csv(index=False)
+    cursor.execute("INSERT INTO portfolio_snapshots (timestamp, snapshot_data) VALUES (?, ?)",
+                   (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), csv_data))
+    db_conn.commit()
+
+def load_snapshots_from_db():
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT timestamp, snapshot_data FROM portfolio_snapshots ORDER BY id DESC")
+    return cursor.fetchall()
+
 
 # 7. AI 深度分析引擎
 def run_ai_analysis(api_key, ticker, info, current_price, target_mean, news_items, score):
@@ -299,11 +320,30 @@ if ticker_list:
                     st.info(rec_res)
 
     with main_col:
-        # 多因子天梯榜
+        # 多因子天梯榜与组合归档
         if not matrix_df.empty:
             st.subheader("🔥 多因子量化综合评分天梯榜 (Quant Score)")
             st.dataframe(matrix_df, use_container_width=True, hide_index=True)
             
+            # --- 新增：一键归档当前天梯榜所有股票到 SQLite ---
+            col_save1, col_save2 = st.columns([2, 8])
+            with col_save1:
+                if st.button("💾 一键打包归档天梯榜"):
+                    save_snapshot_to_db(matrix_df)
+                    st.success("✅ 当前自选池天梯榜已成功存入 SQLite！")
+            
+            # 查看历史天梯榜存档
+            with st.expander("📂 查看历史资产池天梯榜快照存档 (SQLite)"):
+                snapshots = load_snapshots_from_db()
+                if snapshots:
+                    for s_time, s_csv in snapshots:
+                        st.markdown(f"**🕒 存档时间：{s_time}**")
+                        snap_df = pd.read_csv(pd.io.common.StringIO(s_csv))
+                        st.dataframe(snap_df, use_container_width=True, hide_index=True)
+                        st.divider()
+                else:
+                    st.caption("暂无天梯榜快照存档。")
+
             if len(ticker_list) >= 2:
                 opt_df, opt_msg = optimize_portfolio(stock_data_dict)
                 if opt_df is not None:
@@ -397,5 +437,3 @@ if ticker_list:
                 st.divider()
         else:
             st.error("未能获取资产数据。")
-
-
