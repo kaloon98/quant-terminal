@@ -11,10 +11,48 @@ from datetime import datetime
 
 # 1. 页面基本设置
 st.set_page_config(page_title="Ultimate Quant & AI Lab", layout="wide")
+
+# --- 全局密码登录拦截系统 ---
+def check_password():
+    try:
+        correct_password = st.secrets["APP_PASSWORD"]
+    except:
+        correct_password = "123456"  # 默认密码
+
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+
+    if st.session_state["authenticated"]:
+        return True
+
+    st.title("🔒 访问受限：AI 量化操盘指挥中心")
+    st.markdown("为了保护您的策略与 API 资产，请输入访问密码以解锁终端。")
+    
+    with st.form("login_form"):
+        entered_password = st.text_input("请输入访问密码", type="password")
+        submit_button = st.form_submit_button("登录终端")
+        
+        if submit_button:
+            if entered_password == correct_password:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("❌ 密码错误，请重新输入！")
+                
+    return False
+
+if not check_password():
+    st.stop()
+
+
+# ==========================================
+# 🔓 核心量化终端代码
+# ==========================================
+
 st.title("🚀 AI 量化操盘与策略实验室 (Ultimate Pro Max)")
 st.markdown("多因子打分 · Alpha Vantage 异动雷达 · **策略回测引擎** · **马科维茨资产配置** · **AI 财报深度对话**")
 
-# --- 数据库初始化 (SQLite 本地持久化) ---
+# --- 数据库初始化 ---
 def init_db():
     conn = sqlite3.connect('quant_reports.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -35,12 +73,11 @@ db_conn = init_db()
 
 # 2. 侧边栏：输入与配置
 st.sidebar.header("⚙️ 参数与 API 设置")
-tickers = st.sidebar.text_input("输入自选资产代码 (用逗号分隔)", value="INTC, SMCI, IONQ, TSLA, GLD, FUTU, LLY")
+tickers = st.sidebar.text_input("输入自选资产代码 (用逗号分隔)", value="INTC, SMCI, IONQ, TSLA, GLD")
 ticker_list = [t.strip().upper() for t in tickers.split(',') if t.strip()]
 
 period = st.sidebar.selectbox("选择历史时间跨度", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
 
-# 密钥配置：优先读取 secrets.toml
 try:
     gemini_key = st.secrets["GEMINI_API_KEY"]
 except:
@@ -70,7 +107,6 @@ def fetch_all_data(tickers, period):
             except:
                 info = {}
             
-            # 计算 RSI (14)
             delta = df['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -84,7 +120,6 @@ def fetch_all_data(tickers, period):
             short_pct = info.get('shortPercentOfFloat', 0) or 0
             current_rsi = df['RSI'].iloc[-1] if not df['RSI'].empty else 50
             
-            # 多因子量化打分逻辑 (0-100分)
             score = 50.0  
             if upside > 20: score += 20
             elif upside > 0: score += 10
@@ -172,7 +207,7 @@ def optimize_portfolio(data_dict):
     return res_df, f"模拟最优夏普比率 (Sharpe): {round(best_sharpe, 2)}"
 
 
-# 6. 获取 Alpha Vantage 新闻与数据库基础函数
+# 6. 获取 Alpha Vantage 新闻与数据库函数
 @st.cache_data(ttl=3600)
 def fetch_av_news(api_key, ticker):
     if not api_key: return [], "未配置 Key"
@@ -238,12 +273,30 @@ if ticker_list:
                 st.info(brief)
 
         st.markdown("### 🏆 AI 投资推荐雷达")
-        rec_sector = st.selectbox("选择赛道", ["🚀 AI 算力与半导体", "⚡ 新能源与机器人", "💰 黄金与避险大宗"])
-        if st.button("🔥 生成赛道精选标的"):
-            if gemini_key:
-                genai.configure(api_key=gemini_key)
-                rec = genai.GenerativeModel('gemini-3.5-flash').generate_content(f"为{rec_sector}推荐3只标的并说明逻辑").text
-                st.success(rec)
+        
+        # 完整的 5 大宏观赛道选项
+        rec_sector = st.selectbox(
+            "选择宏观赛道", 
+            [
+                "🚀 AI 算力与半导体产业链", 
+                "⚡ 新能源汽车与具身智能机器人", 
+                "💰 全球大宗商品、黄金与避险配置", 
+                "🧬 生物医药与创新科技突破",
+                "🌐 全球宏观高股息与防御性资产"
+            ],
+            key="rec_selector"
+        )
+
+        if st.button("🔥 生成该赛道 AI 投资推荐列表"):
+            if not gemini_key:
+                st.warning("请先配置 Gemini API Key")
+            else:
+                with st.spinner(f"AI 正在深度扫描【{rec_sector}】的市场动向..."):
+                    genai.configure(api_key=gemini_key)
+                    model = genai.GenerativeModel('gemini-3.5-flash')
+                    rec_res = model.generate_content(f"请为{rec_sector}赛道推荐 3 只顶级资产（包含股票代码与名称），并详细说明买入理由、操盘评级与潜在风险。").text
+                    st.success("✅ 推荐列表已生成")
+                    st.info(rec_res)
 
     with main_col:
         # 多因子天梯榜
@@ -321,7 +374,7 @@ if ticker_list:
                             st.success("✅ 研报已成功写入本地 SQLite！")
                             st.info(report)
 
-                # --- 修复后的 AI 财报专属对话框 (Chat with Ticker) ---
+                # --- AI 财报专属对话框 ---
                 user_query = st.chat_input(f"💬 向 Gemini 追问关于 {ticker} 的财报、估值或风险细节...", key=f"chat_{ticker}")
                 if user_query and gemini_key:
                     genai.configure(api_key=gemini_key)
